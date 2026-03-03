@@ -18,8 +18,12 @@ import {
   Menu,
   X,
   Plus,
-  Lock,
-  Unlock
+  Clock,
+  Sun,
+  CloudSun,
+  CloudFog,
+  CloudLightning,
+  CloudDrizzle
 } from 'lucide-react';
 import { 
   LineChart, 
@@ -49,6 +53,8 @@ interface WeatherData {
     humidity: number;
     wind_speed: number;
     rain_1h?: number;
+    rain_probability?: number;
+    weather_code?: number;
     description: string;
   };
   forecast: Array<{
@@ -56,6 +62,8 @@ interface WeatherData {
     temp_min: number;
     temp_max: number;
     rain: number;
+    probability?: number;
+    weather_code?: number;
     description: string;
   }>;
 }
@@ -75,47 +83,52 @@ interface Alert {
   timestamp: string;
   level: 'info' | 'warning' | 'danger';
   message: string;
+  details?: string;
 }
 
 // --- Components ---
+
+const getWeatherIcon = (code?: number, size = 24, className = "") => {
+  if (code === undefined) return <Cloud size={size} className={className} />;
+  
+  // WMO Weather interpretation codes (WW)
+  if (code === 0) return <Sun size={size} className={cn("text-yellow-500", className)} />;
+  if (code >= 1 && code <= 3) return <CloudSun size={size} className={cn("text-slate-400", className)} />;
+  if (code === 45 || code === 48) return <CloudFog size={size} className={cn("text-slate-300", className)} />;
+  if (code >= 51 && code <= 55) return <CloudDrizzle size={size} className={cn("text-blue-300", className)} />;
+  if (code >= 61 && code <= 65) return <CloudRain size={size} className={cn("text-blue-500", className)} />;
+  if (code >= 80 && code <= 82) return <CloudRain size={size} className={cn("text-blue-600", className)} />;
+  if (code >= 95 && code <= 99) return <CloudLightning size={size} className={cn("text-indigo-500", className)} />;
+  
+  return <Cloud size={size} className={cn("text-slate-400", className)} />;
+};
 
 const SidebarItem = ({ icon: Icon, label, active, onClick }: { icon: any, label: string, active?: boolean, onClick: () => void }) => (
   <button 
     onClick={onClick}
     className={cn(
-      "flex items-center w-full gap-4 px-6 py-4 text-sm transition-all duration-500 rounded-2xl group relative overflow-hidden",
+      "flex items-center w-full gap-3 px-4 py-3 text-sm font-medium transition-colors rounded-lg",
       active 
-        ? "bg-blue-600 text-white shadow-2xl shadow-blue-600/20" 
-        : "text-slate-500 hover:bg-slate-800/50 hover:text-white"
+        ? "bg-blue-600 text-white shadow-lg" 
+        : "text-slate-500 hover:bg-slate-100 hover:text-slate-900"
     )}
   >
-    {active && (
-      <motion.div 
-        layoutId="sidebar-active"
-        className="absolute inset-0 bg-blue-600 -z-10"
-        transition={{ type: "spring", bounce: 0.2, duration: 0.6 }}
-      />
-    )}
-    <Icon size={18} className={cn("transition-all duration-500", active ? "scale-110 rotate-3" : "group-hover:scale-110 group-hover:-rotate-3")} />
-    <span className={cn("font-medium tracking-tight transition-all duration-300", active ? "font-black translate-x-1" : "font-medium group-hover:translate-x-1")}>{label}</span>
+    <Icon size={20} />
+    <span>{label}</span>
   </button>
 );
 
 const StatCard = ({ icon: Icon, label, value, unit, color = "blue" }: { icon: any, label: string, value: string | number, unit?: string, color?: string }) => (
-  <div className="bento-item group relative overflow-hidden">
-    <div className={cn(
-      "absolute -right-8 -top-8 w-24 h-24 rounded-full blur-3xl opacity-0 group-hover:opacity-20 transition-opacity duration-1000",
-      `bg-${color}-500`
-    )} />
-    <div className="flex items-center justify-between mb-6 relative z-10">
-      <div className={cn("p-4 rounded-2xl transition-all duration-700 group-hover:scale-110 group-hover:rotate-6 shadow-sm", `bg-${color}-500/10 text-${color}-600`)}>
+  <div className="p-5 bg-white border border-slate-200 rounded-2xl shadow-sm">
+    <div className="flex items-center gap-3 mb-3">
+      <div className={cn("p-2 rounded-lg", `bg-${color}-500/10 text-${color}-600`)}>
         <Icon size={20} />
       </div>
-      <span className="text-[10px] font-black uppercase tracking-[0.3em] text-slate-500">{label}</span>
+      <span className="text-xs font-bold uppercase tracking-wider text-slate-500">{label}</span>
     </div>
-    <div className="flex items-baseline gap-1 relative z-10">
-      <span className="text-5xl font-black tracking-tighter text-white mono group-hover:scale-105 transition-transform duration-500 origin-left">{value}</span>
-      {unit && <span className="text-sm font-black text-slate-500 uppercase tracking-widest ml-1">{unit}</span>}
+    <div className="flex items-baseline gap-1">
+      <span className="text-2xl font-black text-slate-900">{value}</span>
+      {unit && <span className="text-sm font-bold text-slate-400">{unit}</span>}
     </div>
   </div>
 );
@@ -192,6 +205,9 @@ const ReportTemplate = ({ weather, floodRisk, alerts, history }: { weather: Weat
           <div key={alert.id} className="p-4 border border-slate-200 rounded-xl bg-slate-50">
             <p className="text-[10px] font-bold text-slate-500 uppercase mb-1">{format(new Date(alert.timestamp), 'dd/MM HH:mm')}</p>
             <p className="font-bold text-sm">{alert.message}</p>
+            {alert.details && (
+              <p className="text-xs mt-2 pt-2 border-t border-slate-200 text-slate-600 italic">{alert.details}</p>
+            )}
           </div>
         )) : (
           <p className="text-sm text-slate-500 italic">Nenhum alerta ativo no momento.</p>
@@ -225,47 +241,20 @@ export default function App() {
   const [activeTab, setActiveTab] = useState('dashboard');
   const [weather, setWeather] = useState<WeatherData | null>(null);
   const [floodRisk, setFloodRisk] = useState<FloodRisk | null>(null);
+  const [riverTrend, setRiverTrend] = useState<any[]>([]);
   const [alerts, setAlerts] = useState<Alert[]>([]);
   const [history, setHistory] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
-  const [token, setToken] = useState<string | null>(localStorage.getItem('admin_token'));
-  const [loginPassword, setLoginPassword] = useState('');
-  const [loginError, setLoginError] = useState('');
-
-  const handleLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoginError('');
-    try {
-      const res = await fetch('/api/login', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ password: loginPassword })
-      });
-      if (res.ok) {
-        const data = await res.json();
-        setToken(data.token);
-        localStorage.setItem('admin_token', data.token);
-        setLoginPassword('');
-      } else {
-        setLoginError('Senha incorreta. Acesso negado.');
-      }
-    } catch (err) {
-      setLoginError('Erro ao conectar ao servidor.');
-    }
-  };
-
-  const handleLogout = () => {
-    setToken(null);
-    localStorage.removeItem('admin_token');
-    setActiveTab('dashboard');
-  };
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
 
   // Admin state
   const [adminRain, setAdminRain] = useState('');
   const [adminRiver, setAdminRiver] = useState('');
   const [adminAlert, setAdminAlert] = useState('');
+  const [adminAlertDetails, setAdminAlertDetails] = useState('');
   const [adminAlertLevel, setAdminAlertLevel] = useState('info');
+  const [expandedAlerts, setExpandedAlerts] = useState<Record<number, boolean>>({});
 
   const fetchData = async () => {
     try {
@@ -276,10 +265,21 @@ export default function App() {
         fetch('/api/history')
       ]);
       
-      setWeather(await wRes.json());
-      setFloodRisk(await fRes.json());
+      const wData = await wRes.json();
+      const fData = await fRes.json();
+      setWeather(wData);
+      setFloodRisk(fData);
       setAlerts(await aRes.json());
       setHistory(await hRes.json());
+      
+      // Mock river trend based on current level
+      const trend = Array.from({ length: 8 }).map((_, i) => ({
+        day: i === 0 ? 'Hoje' : format(new Date(Date.now() + i * 86400000), 'eee', { locale: ptBR }),
+        level: fData.riverLevel * (1 + (Math.random() * 0.4 - 0.2))
+      }));
+      setRiverTrend(trend);
+      
+      setLastUpdated(new Date());
     } catch (err) {
       console.error("Fetch error:", err);
     } finally {
@@ -295,18 +295,11 @@ export default function App() {
 
   const handleAdminSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const res = await fetch('/api/admin/reading', {
+    await fetch('/api/admin/reading', {
       method: 'POST',
-      headers: { 
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`
-      },
+      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ rainfall_24h: Number(adminRain), river_level: Number(adminRiver) })
     });
-    if (res.status === 401) {
-      handleLogout();
-      return;
-    }
     setAdminRain('');
     setAdminRiver('');
     fetchData();
@@ -314,19 +307,13 @@ export default function App() {
 
   const handleAlertSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const res = await fetch('/api/admin/alert', {
+    await fetch('/api/admin/alert', {
       method: 'POST',
-      headers: { 
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${token}`
-      },
-      body: JSON.stringify({ level: adminAlertLevel, message: adminAlert })
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ level: adminAlertLevel, message: adminAlert, details: adminAlertDetails })
     });
-    if (res.status === 401) {
-      handleLogout();
-      return;
-    }
     setAdminAlert('');
+    setAdminAlertDetails('');
     fetchData();
   };
 
@@ -358,7 +345,7 @@ export default function App() {
 
   if (loading) {
     return (
-      <div className="flex items-center justify-center min-h-screen bg-[#020617] text-white">
+      <div className="flex items-center justify-center min-h-screen bg-white text-slate-900">
         <div className="flex flex-col items-center gap-4">
           <div className="w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full animate-spin"></div>
           <p className="text-slate-500 font-bold animate-pulse">Carregando dados de Ubá...</p>
@@ -368,9 +355,7 @@ export default function App() {
   }
 
   return (
-    <div className="flex min-h-screen bg-[#020617] text-white font-sans selection:bg-blue-500/30 selection:text-blue-200 relative">
-      <div className="noise" />
-      
+    <div className="flex min-h-screen bg-white text-slate-900 font-sans">
       {/* Sidebar Mobile Overlay */}
       <AnimatePresence>
         {isSidebarOpen && (
@@ -379,28 +364,28 @@ export default function App() {
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
             onClick={() => setIsSidebarOpen(false)}
-            className="fixed inset-0 z-40 bg-slate-900/10 lg:hidden backdrop-blur-sm"
+            className="fixed inset-0 z-40 bg-slate-900/40 lg:hidden backdrop-blur-sm"
           />
         )}
       </AnimatePresence>
 
       {/* Sidebar */}
       <aside className={cn(
-        "fixed inset-y-0 left-0 z-50 w-80 bg-slate-900 border-r border-slate-800 transition-all duration-700 ease-in-out lg:relative lg:translate-x-0",
+        "fixed inset-y-0 left-0 z-50 w-64 bg-white border-r border-slate-200 transition-transform lg:relative lg:translate-x-0",
         isSidebarOpen ? "translate-x-0" : "-translate-x-full"
       )}>
-        <div className="flex flex-col h-full p-10">
-          <div className="flex items-center gap-5 mb-20 group cursor-default">
-            <div className="bg-blue-600 p-4 rounded-[1.5rem] shadow-2xl shadow-blue-600/30 transition-transform duration-500 group-hover:rotate-12 group-hover:scale-110">
-              <ShieldAlert className="text-white" size={28} />
+        <div className="flex flex-col h-full p-6">
+          <div className="flex items-center gap-3 mb-10">
+            <div className="bg-blue-600 p-2 rounded-xl shadow-lg shadow-blue-600/20">
+              <ShieldAlert className="text-white" size={24} />
             </div>
             <div>
-              <h1 className="text-2xl font-black text-white leading-none tracking-tighter serif italic">DEFESA CIVIL</h1>
-              <p className="text-[10px] text-slate-500 font-black tracking-[0.4em] uppercase mt-2">Ubá / MG</p>
+              <h1 className="font-black text-slate-900 leading-tight">Defesa Civil</h1>
+              <p className="text-[10px] text-slate-400 font-black tracking-widest uppercase">Ubá - MG</p>
             </div>
           </div>
 
-          <nav className="flex-1 space-y-4">
+          <nav className="flex-1 space-y-2">
             <SidebarItem 
               icon={BarChart3} 
               label="Dashboard" 
@@ -414,51 +399,19 @@ export default function App() {
               onClick={() => { setActiveTab('history'); setIsSidebarOpen(false); }} 
             />
             <SidebarItem 
-              icon={token ? Unlock : Lock} 
+              icon={Settings} 
               label="Administração" 
               active={activeTab === 'admin'} 
               onClick={() => { setActiveTab('admin'); setIsSidebarOpen(false); }} 
             />
           </nav>
 
-          {token && (
-            <div className="mt-auto pt-6 border-t border-slate-800">
-              <button 
-                onClick={handleLogout}
-                className="flex items-center w-full gap-4 px-6 py-4 text-sm text-red-400 hover:bg-red-500/10 rounded-2xl transition-all duration-300 font-bold uppercase tracking-widest"
-              >
-                <X size={18} />
-                Sair do Sistema
-              </button>
-            </div>
-          )}
-
-          <div className="mt-auto pt-10 space-y-6">
-            {/* System Health Widget */}
-            <div className="p-6 bg-slate-800/50 rounded-[2rem] border border-slate-800">
-              <div className="flex items-center justify-between mb-4">
-                <span className="text-[8px] font-black text-slate-500 uppercase tracking-widest">System Health</span>
-                <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse" />
-              </div>
-              <div className="space-y-3">
-                <div className="h-1 w-full bg-slate-700 rounded-full overflow-hidden">
-                  <motion.div 
-                    initial={{ width: 0 }}
-                    animate={{ width: "98%" }}
-                    className="h-full bg-emerald-500"
-                  />
-                </div>
-                <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest">98.2% Uptime</p>
-              </div>
-            </div>
-
-            <div className="p-6 bg-slate-800/50 rounded-[2rem] border border-slate-800 group cursor-pointer hover:shadow-2xl hover:shadow-slate-900/50 transition-all duration-500">
-              <div className="flex items-center gap-4">
-                <div className="w-12 h-12 rounded-2xl bg-slate-800 flex items-center justify-center text-sm font-black text-slate-400 group-hover:scale-110 group-hover:rotate-6 transition-all duration-500">CZ</div>
-                <div className="overflow-hidden">
-                  <p className="text-sm font-black text-white truncate tracking-tight">Cezar P.</p>
-                  <p className="text-[10px] text-slate-500 font-bold truncate uppercase tracking-[0.2em] mt-0.5">Operador</p>
-                </div>
+          <div className="mt-auto pt-6 border-t border-slate-100">
+            <div className="flex items-center gap-3 p-3 bg-slate-50 rounded-xl border border-slate-100">
+              <div className="w-8 h-8 rounded-full bg-slate-200 flex items-center justify-center text-xs font-black text-slate-600">CZ</div>
+              <div className="overflow-hidden">
+                <p className="text-xs font-black text-slate-900 truncate">Cezar P.</p>
+                <p className="text-[10px] text-slate-500 font-bold truncate">Operador de Monitoramento</p>
               </div>
             </div>
           </div>
@@ -466,268 +419,365 @@ export default function App() {
       </aside>
 
       {/* Main Content */}
-      <main className="flex-1 flex flex-col min-w-0 overflow-hidden bg-[#020617]">
+      <main className="flex-1 flex flex-col min-w-0">
         <ReportTemplate weather={weather} floodRisk={floodRisk} alerts={alerts} history={history} />
         {/* Header */}
-        <header className="h-28 flex items-center justify-between px-12 bg-slate-900/40 border-b border-slate-800 backdrop-blur-2xl sticky top-0 z-30">
-          <div className="flex items-center gap-8">
+        <header className="h-16 flex items-center justify-between px-6 bg-white/80 border-b border-slate-200 backdrop-blur-md sticky top-0 z-30">
+          <div className="flex items-center gap-4">
             <button 
               onClick={() => setIsSidebarOpen(true)}
-              className="p-4 lg:hidden text-slate-400 hover:text-white bg-slate-800 rounded-2xl transition-all shadow-sm"
+              className="p-2 lg:hidden text-slate-500 hover:text-slate-900"
             >
-              <Menu size={20} />
+              <Menu size={24} />
             </button>
-            <div>
-              <h2 className="text-[10px] font-black text-slate-500 uppercase tracking-[0.5em] mb-2">
-                {activeTab === 'dashboard' ? 'Real-time Analytics' : activeTab === 'history' ? 'Historical Archive' : 'System Control'}
-              </h2>
-              <p className="text-3xl font-black text-white tracking-tighter serif italic leading-none">
-                {activeTab === 'dashboard' ? 'Monitoramento em Tempo Real' : activeTab === 'history' ? 'Histórico Climático' : 'Painel Administrativo'}
-              </p>
-            </div>
+            <h2 className="text-xs font-black text-slate-900 uppercase tracking-[0.2em]">
+              {activeTab === 'dashboard' ? 'Monitoramento em Tempo Real' : activeTab === 'history' ? 'Histórico Climático' : 'Painel Administrativo'}
+            </h2>
           </div>
           
-          <div className="flex items-center gap-8">
-            <div className="hidden xl:flex flex-col items-end">
-              <p className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-2">Local Time (Ubá)</p>
-              <p className="text-sm font-black text-white mono">{format(new Date(), 'HH:mm', { locale: ptBR })}</p>
-            </div>
-            <div className="h-10 w-px bg-slate-800" />
+          <div className="flex items-center gap-3">
             <button 
               onClick={exportPDF}
-              className="flex items-center gap-4 px-8 py-4 text-xs font-black bg-blue-600 hover:bg-blue-700 text-white rounded-2xl transition-all shadow-2xl shadow-blue-600/20 active:scale-95 group"
+              className="flex items-center gap-2 px-3 py-1.5 text-xs font-black bg-slate-900 hover:bg-slate-800 text-white rounded-lg transition-all shadow-sm active:scale-95"
             >
-              <Download size={18} className="group-hover:-translate-y-1 transition-transform" />
-              <span className="hidden sm:inline uppercase tracking-[0.2em]">Exportar PDF</span>
+              <Download size={14} />
+              <span className="hidden sm:inline">Exportar PDF</span>
             </button>
+            <div className="h-4 w-px bg-slate-200 mx-1" />
+            <div className="flex items-center gap-2 text-[10px] font-black text-slate-500 uppercase tracking-widest">
+              <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
+              <div className="flex flex-col items-start sm:items-end">
+                <span className="hidden sm:inline">Sistema Online</span>
+                {lastUpdated && (
+                  <span className="text-[9px] lowercase font-bold opacity-70">
+                    atualizado em: {format(lastUpdated, "dd/MM/yyyy HH:mm:ss")}
+                  </span>
+                )}
+              </div>
+            </div>
           </div>
         </header>
 
-        <div className="p-12 overflow-y-auto flex-1 scroll-smooth" id="dashboard-content">
+        <div className="p-6 overflow-y-auto" id="dashboard-content">
           {activeTab === 'dashboard' && (
-            <div className="space-y-12 max-w-7xl mx-auto">
-              {/* Risk Alert Banner */}
-              {floodRisk && (
+            <div className="space-y-6">
+              {/* Header Banner - Image Style - Only show if risk is high/critical */}
+              {floodRisk && (floodRisk.risk === 'Alto' || floodRisk.risk === 'Crítico') && (
                 <motion.div 
-                  initial={{ opacity: 0, y: 40 }}
+                  initial={{ opacity: 0, y: -20 }}
                   animate={{ opacity: 1, y: 0 }}
-                  transition={{ duration: 0.8, ease: "easeOut" }}
-                  className={cn(
-                    "p-12 rounded-[4rem] border flex flex-col md:flex-row items-center justify-between gap-12 shadow-[0_30px_60px_-15px_rgba(0,0,0,0.5)] relative overflow-hidden group",
-                    floodRisk.color === 'red' ? "bg-red-950/40 border-red-900/50 text-red-200" :
-                    floodRisk.color === 'orange' ? "bg-orange-950/40 border-orange-900/50 text-orange-200" :
-                    floodRisk.color === 'yellow' ? "bg-yellow-950/40 border-yellow-900/50 text-yellow-200" :
-                    "bg-emerald-950/40 border-emerald-900/50 text-emerald-200"
-                  )}
+                  className="bg-red-700 text-white p-4 rounded-xl flex items-center justify-center gap-4 shadow-lg border-b-4 border-red-900"
                 >
-                  {/* Dramatic decorative background element */}
-                  <div className={cn(
-                    "absolute -right-20 -top-20 w-96 h-96 rounded-full blur-[100px] opacity-20 transition-all duration-1000 group-hover:scale-150 group-hover:opacity-30",
-                    floodRisk.color === 'red' ? "bg-red-500" :
-                    floodRisk.color === 'orange' ? "bg-orange-500" :
-                    floodRisk.color === 'yellow' ? "bg-yellow-500" :
-                    "bg-emerald-500"
-                  )} />
-
-                  <div className="flex items-center gap-10 relative z-10">
-                    <div className={cn(
-                      "p-8 rounded-[2.5rem] shadow-2xl transition-all duration-700 group-hover:rotate-12 group-hover:scale-110 animate-float",
-                      floodRisk.color === 'red' ? "bg-red-600 text-white shadow-red-600/30" :
-                      floodRisk.color === 'orange' ? "bg-orange-600 text-white shadow-orange-600/30" :
-                      floodRisk.color === 'yellow' ? "bg-yellow-600 text-white shadow-yellow-600/30" :
-                      "bg-emerald-600 text-white shadow-emerald-600/30"
-                    )}>
-                      <AlertTriangle size={48} />
-                    </div>
-                    <div>
-                      <h3 className="text-7xl font-black uppercase italic tracking-tighter serif leading-none mb-3 group-hover:tracking-normal transition-all duration-700">Risco: {floodRisk.risk}</h3>
-                      <p className="text-sm font-black opacity-40 uppercase tracking-[0.4em]">Monitoramento Hidrológico Ativo</p>
-                    </div>
-                  </div>
-                  <div className="flex gap-8 relative z-10">
-                    <div className="text-center px-10 py-8 bg-slate-900/40 rounded-[3rem] backdrop-blur-2xl border border-white/10 shadow-xl shadow-black/20 hover:scale-105 transition-transform duration-500">
-                      <p className="text-[10px] font-black uppercase tracking-[0.3em] opacity-40 mb-3">Nível do Rio</p>
-                      <p className="text-5xl font-black mono tracking-tighter text-white">{floodRisk.riverLevel.toFixed(2)}m</p>
-                    </div>
-                    <div className="text-center px-10 py-8 bg-slate-900/40 rounded-[3rem] backdrop-blur-2xl border border-white/10 shadow-xl shadow-black/20 hover:scale-105 transition-transform duration-500">
-                      <p className="text-[10px] font-black uppercase tracking-[0.3em] opacity-40 mb-3">Chuva 24h</p>
-                      <p className="text-5xl font-black mono tracking-tighter text-white">{floodRisk.rain24h.toFixed(1)}mm</p>
-                    </div>
-                  </div>
+                  <AlertTriangle size={32} className="text-white fill-white/20" />
+                  <h1 className="text-2xl font-black uppercase tracking-tighter">Alerta de Inundação <span className="text-xs font-bold opacity-60 normal-case tracking-normal">(dados Defesa Civil)</span></h1>
                 </motion.div>
               )}
 
-              {/* Main Grid */}
-              <div className="grid grid-cols-1 lg:grid-cols-12 gap-12">
-                {/* Weather Stats */}
-                <div className="lg:col-span-8 space-y-12">
-                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-8">
-                    <StatCard icon={Thermometer} label="Temp. Atual" value={weather?.current?.temp ?? '--'} unit="°C" />
-                    <StatCard icon={Droplets} label="Umidade" value={weather?.current?.humidity ?? '--'} unit="%" color="emerald" />
-                    <StatCard icon={Wind} label="Vento" value={weather?.current?.wind_speed ?? '--'} unit="km/h" color="slate" />
-                    <StatCard icon={CloudRain} label="Precipitação" value={weather?.current?.rain_1h ?? '0'} unit="mm" color="blue" />
-                  </div>
-
-                  {/* Precipitation Chart */}
-                  <div className="bento-item !p-12 relative overflow-hidden group">
-                    <div className="absolute -right-20 -top-20 w-80 h-80 bg-blue-500/5 rounded-full blur-[100px] transition-all duration-1000 group-hover:scale-150" />
-                    <div className="flex items-center justify-between mb-12 relative z-10">
-                      <div>
-                        <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-[0.4em] mb-3">Análise de Dados</h3>
-                        <p className="text-4xl font-black text-white tracking-tighter serif italic leading-none">Tendência de Precipitação</p>
-                      </div>
-                      <div className="flex gap-3">
-                        <div className="px-6 py-3 bg-slate-800 rounded-2xl text-[10px] font-black text-slate-500 uppercase tracking-[0.2em] border border-slate-700 shadow-sm">Próximas 24h</div>
-                      </div>
-                    </div>
-                    <div className="h-[400px] w-full relative z-10">
-                      <ResponsiveContainer width="100%" height="100%">
-                        <AreaChart data={weather?.forecast || []}>
-                          <defs>
-                            <linearGradient id="colorRain" x1="0" y1="0" x2="0" y2="1">
-                              <stop offset="5%" stopColor="#3b82f6" stopOpacity={0.2}/>
-                              <stop offset="95%" stopColor="#3b82f6" stopOpacity={0}/>
-                            </linearGradient>
-                          </defs>
-                          <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
-                          <XAxis 
-                            dataKey="date" 
-                            tickFormatter={(val) => format(new Date(val), 'HH:mm', { locale: ptBR })}
-                            stroke="#94a3b8"
-                            fontSize={10}
-                            tickLine={false}
-                            axisLine={false}
-                            dy={15}
-                            tick={{ fontWeight: 800, letterSpacing: '1px' }}
-                          />
-                          <YAxis stroke="#94a3b8" fontSize={10} tickLine={false} axisLine={false} dx={-15} tick={{ fontWeight: 800 }} />
-                          <Tooltip 
-                            contentStyle={{ 
-                              backgroundColor: 'rgba(255, 255, 255, 0.9)', 
-                              border: '1px solid #f1f5f9', 
-                              borderRadius: '24px', 
-                              boxShadow: '0 25px 50px -12px rgb(0 0 0 / 0.1)',
-                              backdropFilter: 'blur(10px)',
-                              padding: '20px'
-                            }}
-                            itemStyle={{ color: '#0f172a', fontWeight: 900, fontSize: '14px' }}
-                            labelStyle={{ color: '#94a3b8', fontWeight: 900, fontSize: '10px', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '8px' }}
-                            cursor={{ stroke: '#3b82f6', strokeWidth: 2, strokeDasharray: '5 5' }}
-                          />
-                          <Area 
-                            type="monotone" 
-                            dataKey="rain" 
-                            stroke="#3b82f6" 
-                            fillOpacity={1} 
-                            fill="url(#colorRain)" 
-                            strokeWidth={5}
-                            animationDuration={2500}
-                          />
-                        </AreaChart>
-                      </ResponsiveContainer>
+              {/* Top Grid - Weather Info */}
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm relative overflow-hidden">
+                  <div className="absolute top-0 right-0 px-2 py-0.5 bg-slate-100 text-[8px] font-bold text-slate-400 uppercase rounded-bl-lg">Open-Meteo</div>
+                  <p className="text-xs font-bold text-slate-500 uppercase mb-3">Previsão de Chuva</p>
+                  <div className="flex items-center gap-4">
+                    {getWeatherIcon(weather?.current?.weather_code, 40, "text-blue-500")}
+                    <div>
+                      <p className="text-3xl font-black text-slate-900">{weather?.current?.rain_1h?.toFixed(0) || '0'} mm</p>
+                      <p className="text-[10px] font-bold text-slate-400 uppercase">Acumulado</p>
                     </div>
                   </div>
                 </div>
 
-                {/* Alerts & Notices */}
-                <div className="lg:col-span-4">
-                  <div className="bento-item !p-12 h-full relative overflow-hidden group">
-                    <div className="absolute -right-20 -top-20 w-64 h-64 bg-orange-500/5 rounded-full blur-[80px] transition-all duration-1000 group-hover:scale-150" />
-                    <div className="flex items-center gap-6 mb-12 relative z-10">
-                      <div className="p-4 bg-orange-500/10 text-orange-600 rounded-[1.5rem] shadow-sm transform transition-all duration-500 group-hover:rotate-12 group-hover:scale-110">
-                        <ShieldAlert size={24} />
-                      </div>
-                      <div>
-                        <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-[0.4em] mb-2">Comunicados</h3>
-                        <p className="text-3xl font-black text-white tracking-tighter serif italic leading-none">Avisos Oficiais</p>
-                      </div>
-                    </div>
-                    <div className="space-y-8 relative z-10">
-                      {alerts.length > 0 ? alerts.map((alert, i) => (
-                        <motion.div 
-                          initial={{ opacity: 0, x: 20 }}
-                          animate={{ opacity: 1, x: 0 }}
-                          transition={{ delay: i * 0.1 }}
-                          key={alert.id} 
-                          className={cn(
-                            "p-8 rounded-[2.5rem] border transition-all duration-500 hover:scale-[1.03] cursor-default",
-                            alert.level === 'danger' ? "bg-red-950/40 border-red-900/50 text-red-200 shadow-2xl shadow-red-900/20" :
-                            alert.level === 'warning' ? "bg-orange-950/40 border-orange-900/50 text-orange-200 shadow-2xl shadow-orange-900/20" :
-                            "bg-blue-950/40 border-blue-900/50 text-blue-200 shadow-2xl shadow-blue-900/20"
-                          )}
-                        >
-                          <div className="flex items-center justify-between mb-4">
-                            <div className="flex items-center gap-3">
-                              <Info size={16} className="opacity-40" />
-                              <span className="text-[10px] font-black uppercase tracking-[0.2em] opacity-40 mono">{format(new Date(alert.timestamp), 'HH:mm')}</span>
-                            </div>
-                            <span className="text-[10px] font-black uppercase tracking-[0.2em] opacity-40 mono">{format(new Date(alert.timestamp), 'dd/MM')}</span>
-                          </div>
-                          <p className="font-black text-lg leading-tight tracking-tight serif italic">{alert.message}</p>
-                        </motion.div>
-                      )) : (
-                        <div className="flex flex-col items-center justify-center py-32 text-slate-200">
-                          <ShieldAlert size={80} strokeWidth={1} className="mb-8 opacity-20 animate-pulse" />
-                          <p className="text-[10px] font-black uppercase tracking-[0.5em]">Nenhum alerta ativo</p>
-                        </div>
+                <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm relative overflow-hidden">
+                  <div className="absolute top-0 right-0 px-2 py-0.5 bg-slate-100 text-[8px] font-bold text-slate-400 uppercase rounded-bl-lg">Open-Meteo</div>
+                  <p className="text-xs font-bold text-slate-500 uppercase mb-3">Probabilidade de Chuva</p>
+                  <div className="flex items-center gap-4">
+                    <div className="relative">
+                      {getWeatherIcon(weather?.current?.weather_code, 40, "text-slate-300")}
+                      {weather?.current?.rain_probability && weather.current.rain_probability > 0 && (
+                        <Droplets size={20} className="text-blue-400 absolute bottom-0 right-0" />
                       )}
+                    </div>
+                    <p className="text-3xl font-black text-slate-900">{weather?.current?.rain_probability || '0'}%</p>
+                  </div>
+                </div>
+
+                <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm relative overflow-hidden">
+                  <div className="absolute top-0 right-0 px-2 py-0.5 bg-slate-100 text-[8px] font-bold text-slate-400 uppercase rounded-bl-lg">Open-Meteo</div>
+                  <p className="text-xs font-bold text-slate-500 uppercase mb-3">Temperatura Atual</p>
+                  <div className="flex items-center gap-4">
+                    <div className="text-3xl font-black text-slate-900">{weather?.current?.temp?.toFixed(0) || '--'}°C</div>
+                    <div className="text-[10px] font-bold text-slate-400">
+                      <p>Máx: {weather?.forecast?.[0]?.temp_max?.toFixed(0)}°</p>
+                      <p>Mín: {weather?.forecast?.[0]?.temp_min?.toFixed(0)}°</p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm relative overflow-hidden">
+                  <div className="absolute top-0 right-0 px-2 py-0.5 bg-slate-100 text-[8px] font-bold text-slate-400 uppercase rounded-bl-lg">Open-Meteo</div>
+                  <p className="text-xs font-bold text-slate-500 uppercase mb-3">Próximos Dias</p>
+                  <div className="flex justify-between items-center">
+                    {weather?.forecast?.slice(1, 4).map((day, i) => (
+                      <div key={i} className="text-center">
+                        <p className="text-[10px] font-black text-slate-400 uppercase mb-1">{format(new Date(day.date), 'eee', { locale: ptBR })}</p>
+                        {getWeatherIcon(day.weather_code, 16, "mx-auto mb-1")}
+                        <p className="text-[10px] font-bold text-slate-900">{day.temp_max.toFixed(0)}°/{day.temp_min.toFixed(0)}°</p>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+
+              {/* Middle Grid - Risk and Chart */}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                {/* Risk Card */}
+                <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm relative overflow-hidden">
+                  <div className="absolute top-0 right-0 px-3 py-1 bg-slate-100 text-[9px] font-black text-slate-400 uppercase rounded-bl-xl">Defesa Civil / Sensores</div>
+                  <h3 className="text-sm font-black text-slate-900 uppercase tracking-widest mb-6">Risco de Inundação</h3>
+                  
+                  {/* Segmented Bar */}
+                  <div className="flex h-12 rounded-xl overflow-hidden mb-6 border border-slate-100 shadow-inner">
+                    <div className={cn(
+                      "flex-1 flex items-center justify-center text-xs font-black uppercase tracking-widest transition-all",
+                      floodRisk?.risk === 'Baixo' ? "bg-emerald-500 text-white shadow-[inset_0_0_20px_rgba(0,0,0,0.2)]" : "bg-emerald-100 text-emerald-700 opacity-40"
+                    )}>Baixo</div>
+                    <div className={cn(
+                      "flex-1 flex items-center justify-center text-xs font-black uppercase tracking-widest transition-all",
+                      floodRisk?.risk === 'Moderado' ? "bg-yellow-500 text-white shadow-[inset_0_0_20px_rgba(0,0,0,0.2)]" : "bg-yellow-100 text-yellow-700 opacity-40"
+                    )}>Médio</div>
+                    <div className={cn(
+                      "flex-1 flex items-center justify-center text-xs font-black uppercase tracking-widest transition-all",
+                      floodRisk?.risk === 'Alto' || floodRisk?.risk === 'Crítico' ? "bg-red-500 text-white shadow-[inset_0_0_20px_rgba(0,0,0,0.2)]" : "bg-red-100 text-red-700 opacity-40"
+                    )}>Alto</div>
+                  </div>
+
+                  <div className="space-y-2">
+                    <p className="text-lg font-black text-slate-900 italic">
+                      {floodRisk?.risk === 'Baixo' ? 'Condições estáveis no momento.' :
+                       floodRisk?.risk === 'Moderado' ? 'Atenção: Risco moderado de inundação.' :
+                       floodRisk?.risk === 'Alto' ? 'Alerta: Risco alto de inundação.' :
+                       'Emergência: Risco crítico de inundação!'}
+                    </p>
+                    <p className="text-sm font-medium text-slate-500">
+                      {floodRisk?.risk === 'Baixo' ? 'O nível do rio e a previsão de chuva indicam normalidade. Continue acompanhando as atualizações.' :
+                       floodRisk?.risk === 'Moderado' ? 'Elevação gradual do nível do rio. Recomendamos atenção redobrada em áreas ribeirinhas.' :
+                       floodRisk?.risk === 'Alto' ? 'Nível do rio em estágio de alerta. Prepare-se para possíveis alagamentos e siga as orientações da Defesa Civil.' :
+                       'Transbordamento iminente ou em curso. Evacue áreas de risco imediatamente e procure locais seguros.'}
+                    </p>
+                  </div>
+
+                  <AnimatePresence>
+                    {floodRisk?.risk !== 'Baixo' && (
+                      <motion.div 
+                        initial={{ height: 0, opacity: 0 }}
+                        animate={{ height: 'auto', opacity: 1 }}
+                        exit={{ height: 0, opacity: 0 }}
+                        className="mt-6 pt-6 border-t border-slate-100 space-y-4 overflow-hidden"
+                      >
+                        <div className="flex items-start gap-3">
+                          <div className="p-2 bg-slate-100 rounded-lg shrink-0">
+                            <Info size={16} className="text-slate-500" />
+                          </div>
+                          <div>
+                            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Origem dos Dados</p>
+                            <p className="text-xs font-bold text-slate-700">Sensores Hidrológicos e Pluviométricos (Cemaden/Defesa Civil)</p>
+                          </div>
+                        </div>
+                        
+                        <div className="flex items-start gap-3">
+                          <div className="p-2 bg-slate-100 rounded-lg shrink-0">
+                            <AlertTriangle size={16} className="text-slate-500" />
+                          </div>
+                          <div>
+                            <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-1">Motivo do Alerta</p>
+                            <p className="text-xs font-bold text-slate-700">
+                              {floodRisk?.riverLevel && floodRisk.riverLevel > 3.5 ? "Nível do Rio Ubá acima da cota de atenção." :
+                               floodRisk?.rain24h && floodRisk.rain24h > 50 ? "Chuva acumulada nas últimas 24h superior a 50mm." :
+                               "Combinação de previsão meteorológica e saturação do solo."}
+                            </p>
+                          </div>
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </div>
+
+                {/* River Level Chart */}
+                <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm relative overflow-hidden">
+                  <div className="absolute top-0 right-0 px-3 py-1 bg-slate-100 text-[9px] font-black text-slate-400 uppercase rounded-bl-xl">Estação Hidrométrica</div>
+                  <h3 className="text-sm font-black text-slate-900 uppercase tracking-widest mb-6">Nível do Rio Ubá - 7 Dias</h3>
+                  <div className="h-48 w-full relative">
+                    {/* Background Zones */}
+                    <div className="absolute inset-0 flex flex-col pointer-events-none opacity-10">
+                      <div className="flex-1 bg-red-500" />
+                      <div className="flex-1 bg-yellow-500" />
+                      <div className="flex-1 bg-emerald-500" />
+                    </div>
+                    
+                    <ResponsiveContainer width="100%" height="100%">
+                      <LineChart data={riverTrend}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
+                        <XAxis dataKey="day" stroke="#94a3b8" fontSize={10} tickLine={false} axisLine={false} />
+                        <YAxis hide domain={[0, 6]} />
+                        <Tooltip 
+                          contentStyle={{ backgroundColor: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '12px' }}
+                        />
+                        <Line 
+                          type="monotone" 
+                          dataKey="level" 
+                          stroke="#334155" 
+                          strokeWidth={4} 
+                          dot={{ r: 6, fill: '#fff', stroke: '#334155', strokeWidth: 2 }}
+                          activeDot={{ r: 8 }}
+                        />
+                      </LineChart>
+                    </ResponsiveContainer>
+                  </div>
+                  <div className="flex justify-between mt-4">
+                    <div className="flex items-center gap-2">
+                      <div className="w-3 h-3 rounded-full bg-emerald-500" />
+                      <span className="text-[10px] font-black uppercase text-slate-400">Baixo</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <div className="w-3 h-3 rounded-full bg-yellow-500" />
+                      <span className="text-[10px] font-black uppercase text-slate-400">Médio</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <div className="w-3 h-3 rounded-full bg-red-500" />
+                      <span className="text-[10px] font-black uppercase text-slate-400">Alto</span>
                     </div>
                   </div>
                 </div>
               </div>
 
-              {/* Forecast Section */}
-              <div className="bento-item !p-12 relative overflow-hidden group">
-                <div className="absolute -left-20 -bottom-20 w-96 h-96 bg-emerald-500/5 rounded-full blur-[120px] transition-all duration-1000 group-hover:scale-150" />
-                <div className="flex items-center justify-between mb-12 relative z-10">
-                  <div>
-                    <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-[0.4em] mb-3">Planejamento</h3>
-                    <p className="text-4xl font-black text-white tracking-tighter serif italic leading-none">Previsão Semanal</p>
+              {/* Bottom Section - Alerts */}
+              <div className="bg-white p-6 rounded-3xl border border-slate-200 shadow-sm">
+                <div className="flex items-center gap-2 mb-6">
+                  <Info size={18} className="text-blue-500" />
+                  <h3 className="text-sm font-black text-slate-900 uppercase tracking-widest">Último Alerta da Região</h3>
+                </div>
+                
+                <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+                  <div className="lg:col-span-3">
+                    {alerts.length > 0 ? (
+                      <div className={cn(
+                        "border rounded-3xl p-6 transition-all h-full",
+                        alerts[0].level === 'danger' ? "bg-red-50/50 border-red-100" :
+                        alerts[0].level === 'warning' ? "bg-orange-50/50 border-orange-100" :
+                        "bg-blue-50/50 border-blue-100"
+                      )}>
+                        <div className={cn(
+                          "flex items-center gap-2 mb-4",
+                          alerts[0].level === 'danger' ? "text-red-500/60" :
+                          alerts[0].level === 'warning' ? "text-orange-500/60" :
+                          "text-blue-500/60"
+                        )}>
+                          <Clock size={16} />
+                          <span className="text-[10px] font-black uppercase tracking-widest">
+                            {format(new Date(alerts[0].timestamp), "dd 'de' MMMM 'às' HH:mm", { locale: ptBR })}
+                          </span>
+                        </div>
+                        
+                        <h4 className={cn(
+                          "text-xl font-black mb-4",
+                          alerts[0].level === 'danger' ? "text-red-600" :
+                          alerts[0].level === 'warning' ? "text-orange-600" :
+                          "text-blue-600"
+                        )}>Defesa Civil</h4>
+                        
+                        <div className={cn(
+                          "h-px w-full mb-4",
+                          alerts[0].level === 'danger' ? "bg-red-100" :
+                          alerts[0].level === 'warning' ? "bg-orange-100" :
+                          "bg-blue-100"
+                        )} />
+                        
+                        <p className={cn(
+                          "font-bold leading-relaxed",
+                          alerts[0].level === 'danger' ? "text-red-600/80" :
+                          alerts[0].level === 'warning' ? "text-orange-600/80" :
+                          "text-blue-600/80"
+                        )}>
+                          {alerts[0].message}
+                          {alerts[0].details && (
+                            <span className="block mt-2 text-sm opacity-80 font-medium italic">
+                              {alerts[0].details}
+                            </span>
+                          )}
+                        </p>
+
+                        <p className={cn(
+                          "mt-4 text-[10px] font-bold uppercase tracking-wider",
+                          alerts[0].level === 'danger' ? "text-red-400" :
+                          alerts[0].level === 'warning' ? "text-orange-400" :
+                          "text-blue-400"
+                        )}>
+                          Em caso de emergência, acione a Defesa Civil pelo WhatsApp: (32) 99818-9318.
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="text-center py-10 text-slate-300 bg-slate-50 border border-slate-100 rounded-3xl h-full flex items-center justify-center">
+                        <p className="text-xs font-black uppercase tracking-widest">Nenhum alerta ativo no momento</p>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Legend / Palette */}
+                  <div className="lg:col-span-1 space-y-4">
+                    <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Legenda de Alertas</p>
+                    <div className="space-y-3">
+                      <div className="flex items-start gap-3 p-3 rounded-2xl bg-blue-50 border border-blue-100">
+                        <div className="w-4 h-4 rounded-full bg-blue-500 mt-0.5 shrink-0" />
+                        <div>
+                          <p className="text-[10px] font-black text-blue-600 uppercase">Informativo</p>
+                          <p className="text-[10px] font-medium text-blue-500/80 leading-tight">Avisos gerais e orientações preventivas.</p>
+                        </div>
+                      </div>
+                      <div className="flex items-start gap-3 p-3 rounded-2xl bg-orange-50 border border-orange-100">
+                        <div className="w-4 h-4 rounded-full bg-orange-500 mt-0.5 shrink-0" />
+                        <div>
+                          <p className="text-[10px] font-black text-orange-600 uppercase">Atenção</p>
+                          <p className="text-[10px] font-medium text-orange-500/80 leading-tight">Risco moderado, requer vigilância e monitoramento.</p>
+                        </div>
+                      </div>
+                      <div className="flex items-start gap-3 p-3 rounded-2xl bg-red-50 border border-red-100">
+                        <div className="w-4 h-4 rounded-full bg-red-500 mt-0.5 shrink-0" />
+                        <div>
+                          <p className="text-[10px] font-black text-red-600 uppercase">Emergência</p>
+                          <p className="text-[10px] font-medium text-red-500/80 leading-tight">Risco alto ou crítico, requer ação imediata.</p>
+                        </div>
+                      </div>
+                    </div>
                   </div>
                 </div>
-                <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-8 relative z-10">
-                  {weather?.forecast?.map((day, i) => (
-                    <motion.div 
-                      initial={{ opacity: 0, y: 20 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      transition={{ delay: i * 0.05 }}
-                      key={i} 
-                      className="p-10 bg-slate-800/50 border border-slate-800 rounded-[3rem] text-center hover:bg-slate-800 hover:shadow-[0_40px_80px_-20px_rgba(0,0,0,0.5)] transition-all duration-700 cursor-default group/day"
-                    >
-                      <p className="text-[10px] font-black text-slate-500 uppercase tracking-[0.3em] mb-6 group-hover/day:text-white transition-colors">
-                        {i === 0 ? 'Hoje' : format(new Date(day.date), 'eee', { locale: ptBR })}
-                      </p>
-                      <div className="flex justify-center mb-8 text-blue-500 transition-all duration-700 group-hover/day:scale-125 group-hover/day:-rotate-12 group-hover/day:drop-shadow-2xl">
-                        {day.rain > 10 ? <CloudRain size={40} /> : <Cloud size={40} />}
-                      </div>
-                      <div className="flex flex-col gap-2 mb-6">
-                        <span className="text-4xl font-black text-white mono tracking-tighter group-hover/day:scale-110 transition-transform duration-500">{day.temp_max?.toFixed(0) ?? '--'}°</span>
-                        <span className="text-sm font-black text-slate-500 mono tracking-tighter">{day.temp_min?.toFixed(0) ?? '--'}°</span>
-                      </div>
-                      <div className="pt-6 border-t border-slate-800">
-                        <p className="text-[10px] font-black text-blue-400 mono tracking-[0.2em] uppercase">{day.rain?.toFixed(1) ?? '0.0'}mm</p>
-                      </div>
-                    </motion.div>
-                  ))}
+              </div>
+
+              {/* SMS Subscription Info */}
+              <div className="p-6 bg-blue-600 rounded-3xl text-white shadow-xl shadow-blue-600/20 flex flex-col md:flex-row items-center gap-6">
+                <div className="p-4 bg-white/20 rounded-2xl shrink-0">
+                  <Navigation size={32} className="text-white" />
+                </div>
+                <div className="text-center md:text-left">
+                  <h4 className="text-xl font-black uppercase tracking-tighter mb-1">Receba Alertas via SMS</h4>
+                  <p className="text-sm font-bold opacity-90 leading-relaxed">
+                    Para receber os alertas da Defesa Civil sobre Ubá, envie um SMS para o número 
+                    <span className="bg-white text-blue-600 px-2 py-0.5 rounded-md mx-2 inline-block">40199</span> 
+                    com o CEP 
+                    <span className="bg-white text-blue-600 px-2 py-0.5 rounded-md mx-2 inline-block">36500-001</span>
+                  </p>
                 </div>
               </div>
             </div>
           )}
 
           {activeTab === 'history' && (
-            <div className="space-y-12 max-w-7xl mx-auto">
-              <div className="bento-item !p-12 relative overflow-hidden group">
-                <div className="absolute -right-20 -top-20 w-96 h-96 bg-blue-500/5 rounded-full blur-[120px] transition-all duration-1000 group-hover:scale-150" />
-                <div className="flex items-center justify-between mb-12 relative z-10">
-                  <div>
-                    <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-[0.4em] mb-3">Dados Históricos</h3>
-                    <p className="text-4xl font-black text-white tracking-tighter serif italic leading-none">Volume de Chuva (30 Dias)</p>
-                  </div>
-                </div>
-                <div className="h-[500px] w-full relative z-10">
+            <div className="space-y-6">
+              <div className="p-6 bg-white border border-slate-200 rounded-3xl shadow-sm">
+                <h3 className="text-xs font-black text-slate-900 uppercase tracking-widest mb-6">Volume de Chuva - Últimos 30 Dias</h3>
+                <div className="h-80 w-full">
                   <ResponsiveContainer width="100%" height="100%">
                     <BarChart data={history}>
-                      <CartesianGrid strokeDasharray="3 3" stroke="#1e293b" vertical={false} />
+                      <CartesianGrid strokeDasharray="3 3" stroke="#f1f5f9" vertical={false} />
                       <XAxis 
                         dataKey="date" 
                         stroke="#94a3b8" 
@@ -735,30 +785,12 @@ export default function App() {
                         tickFormatter={(val) => format(new Date(val), 'dd/MM')}
                         tickLine={false}
                         axisLine={false}
-                        dy={15}
-                        tick={{ fontWeight: 800, letterSpacing: '1px' }}
                       />
-                      <YAxis stroke="#94a3b8" fontSize={10} tickLine={false} axisLine={false} dx={-15} tick={{ fontWeight: 800 }} />
+                      <YAxis stroke="#94a3b8" fontSize={10} tickLine={false} axisLine={false} />
                       <Tooltip 
-                        contentStyle={{ 
-                          backgroundColor: 'rgba(15, 23, 42, 0.9)', 
-                          border: '1px solid #1e293b', 
-                          borderRadius: '24px', 
-                          boxShadow: '0 25px 50px -12px rgb(0 0 0 / 0.5)',
-                          backdropFilter: 'blur(10px)',
-                          padding: '20px'
-                        }}
-                        itemStyle={{ color: '#f8fafc', fontWeight: 900, fontSize: '14px' }}
-                        labelStyle={{ color: '#94a3b8', fontWeight: 900, fontSize: '10px', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '8px' }}
-                        cursor={{ fill: 'rgba(59, 130, 246, 0.05)', radius: 12 }}
+                        contentStyle={{ backgroundColor: '#ffffff', border: '1px solid #e2e8f0', borderRadius: '12px', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)' }}
                       />
-                      <Bar 
-                        dataKey="rain" 
-                        fill="#3b82f6" 
-                        radius={[12, 12, 0, 0]} 
-                        animationDuration={2000}
-                        barSize={30}
-                      />
+                      <Bar dataKey="rain" fill="#3b82f6" radius={[4, 4, 0, 0]} />
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
@@ -766,140 +798,100 @@ export default function App() {
             </div>
           )}
 
-          {activeTab === 'admin' && !token && (
-            <div className="max-w-md mx-auto mt-20">
-              <motion.div 
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                className="bento-item !p-12 relative overflow-hidden group"
-              >
-                <div className="absolute -right-20 -top-20 w-64 h-64 bg-slate-900/5 rounded-full blur-[80px]" />
-                <div className="flex flex-col items-center text-center mb-10 relative z-10">
-                  <div className="p-6 bg-blue-600 text-white rounded-[2rem] shadow-2xl mb-6">
-                    <Lock size={32} />
-                  </div>
-                  <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-[0.4em] mb-2">Área Restrita</h3>
-                  <p className="text-3xl font-black text-white tracking-tighter serif italic leading-none">Autenticação</p>
-                  <p className="text-slate-400 mt-4 text-sm font-medium">Insira a senha de administrador para acessar as ferramentas de gestão.</p>
-                </div>
-
-                <form onSubmit={handleLogin} className="space-y-6 relative z-10">
-                  <div className="space-y-4">
-                    <input 
-                      type="password" 
-                      value={loginPassword}
-                      onChange={(e) => setLoginPassword(e.target.value)}
-                      className="w-full bg-slate-800/50 border border-slate-800 rounded-[2rem] px-8 py-5 text-white font-black focus:outline-none focus:ring-4 focus:ring-blue-500/10 focus:bg-slate-800 transition-all duration-500 text-center tracking-[0.5em]"
-                      placeholder="••••••••"
-                      required
-                    />
-                    {loginError && (
-                      <p className="text-red-400 text-[10px] font-black uppercase tracking-widest text-center mt-2">{loginError}</p>
-                    )}
-                  </div>
-                  <button type="submit" className="w-full py-6 bg-blue-600 hover:bg-blue-700 text-white font-black rounded-[2rem] transition-all duration-500 shadow-2xl shadow-blue-600/20 active:scale-[0.98] uppercase tracking-[0.3em] text-xs">
-                    Entrar no Painel
-                  </button>
-                </form>
-              </motion.div>
-            </div>
-          )}
-
-          {activeTab === 'admin' && token && (
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-10 max-w-7xl mx-auto">
-              <div className="bento-item !p-12 relative overflow-hidden group">
-                <div className="absolute -right-20 -top-20 w-64 h-64 bg-blue-500/5 rounded-full blur-[80px] transition-all duration-1000 group-hover:scale-150" />
-                <div className="flex items-center gap-6 mb-12 relative z-10">
-                  <div className="p-4 bg-blue-500/10 text-blue-600 rounded-[1.5rem] shadow-sm transform transition-all duration-500 group-hover:rotate-12 group-hover:scale-110">
-                    <Plus size={24} />
+          {activeTab === 'admin' && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {/* Manual Alert Issuance */}
+              <div className="p-6 bg-white border border-slate-200 rounded-3xl shadow-sm">
+                <h3 className="text-sm font-black text-slate-900 uppercase tracking-widest mb-6 flex items-center gap-2">
+                  <ShieldAlert size={18} className="text-orange-500" />
+                  Emitir Alertas Manuais
+                </h3>
+                <form onSubmit={handleAlertSubmit} className="space-y-4">
+                  <div>
+                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Nível de Gravidade</label>
+                    <select 
+                      value={adminAlertLevel}
+                      onChange={(e) => setAdminAlertLevel(e.target.value)}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-slate-900 focus:outline-none focus:border-blue-500 focus:bg-white transition-all"
+                    >
+                      <option value="info">Informativo (Azul)</option>
+                      <option value="warning">Atenção (Laranja)</option>
+                      <option value="danger">Emergência (Vermelho)</option>
+                    </select>
                   </div>
                   <div>
-                    <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-[0.4em] mb-2">Entrada de Dados</h3>
-                    <p className="text-3xl font-black text-white tracking-tighter serif italic leading-none">Leitura Manual</p>
-                  </div>
-                </div>
-                <form onSubmit={handleAdminSubmit} className="space-y-8 relative z-10">
-                  <div className="space-y-4">
-                    <label className="block text-[10px] font-black text-slate-500 uppercase tracking-[0.3em] ml-2">Chuva Acumulada (24h - mm)</label>
-                    <input 
-                      type="number" 
-                      value={adminRain}
-                      onChange={(e) => setAdminRain(e.target.value)}
-                      className="w-full bg-slate-800/50 border border-slate-800 rounded-[2rem] px-8 py-5 text-white font-black focus:outline-none focus:ring-4 focus:ring-blue-500/10 focus:bg-slate-800 transition-all duration-500 mono text-lg"
-                      placeholder="0.0"
+                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Mensagem do Alerta</label>
+                    <textarea 
+                      value={adminAlert}
+                      onChange={(e) => setAdminAlert(e.target.value)}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-slate-900 focus:outline-none focus:border-blue-500 focus:bg-white transition-all h-20 resize-none"
+                      placeholder="Título/Resumo do alerta..."
                       required
                     />
                   </div>
-                  <div className="space-y-4">
-                    <label className="block text-[10px] font-black text-slate-500 uppercase tracking-[0.3em] ml-2">Nível do Rio Ubá (m)</label>
-                    <input 
-                      type="number" 
-                      value={adminRiver}
-                      onChange={(e) => setAdminRiver(e.target.value)}
-                      className="w-full bg-slate-800/50 border border-slate-800 rounded-[2rem] px-8 py-5 text-white font-black focus:outline-none focus:ring-4 focus:ring-blue-500/10 focus:bg-slate-800 transition-all duration-500 mono text-lg"
-                      placeholder="0.00"
-                      required
+                  <div>
+                    <label className="block text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Detalhes Adicionais (Opcional)</label>
+                    <textarea 
+                      value={adminAlertDetails}
+                      onChange={(e) => setAdminAlertDetails(e.target.value)}
+                      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-3 text-slate-900 focus:outline-none focus:border-blue-500 focus:bg-white transition-all h-24 resize-none"
+                      placeholder="Instruções detalhadas, locais afetados, etc..."
                     />
                   </div>
-                  <button type="submit" className="w-full py-6 bg-blue-600 hover:bg-blue-700 text-white font-black rounded-[2rem] transition-all duration-500 shadow-2xl shadow-blue-600/20 active:scale-[0.98] uppercase tracking-[0.3em] text-xs flex items-center justify-center gap-4">
-                    <Plus size={18} />
-                    Salvar Leitura
+                  <button type="submit" className="w-full py-3 bg-orange-600 hover:bg-orange-500 text-white font-black rounded-xl transition-all shadow-lg shadow-orange-600/20 active:scale-[0.98]">
+                    Publicar Alerta
                   </button>
                 </form>
               </div>
 
-              <div className="bento-item !p-12 relative overflow-hidden group">
-                <div className="absolute -right-20 -top-20 w-64 h-64 bg-orange-500/5 rounded-full blur-[80px] transition-all duration-1000 group-hover:scale-150" />
-                <div className="flex items-center gap-6 mb-12 relative z-10">
-                  <div className="p-4 bg-orange-500/10 text-orange-600 rounded-[1.5rem] shadow-sm transform transition-all duration-500 group-hover:rotate-12 group-hover:scale-110">
-                    <ShieldAlert size={24} />
+              {/* Last Alert Display */}
+              <div className="p-6 bg-white border border-slate-200 rounded-3xl shadow-sm">
+                <h3 className="text-sm font-black text-slate-900 uppercase tracking-widest mb-6 flex items-center gap-2">
+                  <Info size={18} className="text-blue-500" />
+                  Último Alerta da Região
+                </h3>
+                
+                {alerts.length > 0 ? (
+                  <div className={cn(
+                    "p-5 rounded-2xl border transition-all",
+                    alerts[0].level === 'danger' ? "bg-red-50 border-red-100 text-red-700" :
+                    alerts[0].level === 'warning' ? "bg-orange-50 border-orange-100 text-orange-700" :
+                    "bg-blue-50 border-blue-100 text-blue-700"
+                  )}>
+                    <div className="flex items-center gap-2 mb-3 opacity-60">
+                      <Clock size={14} />
+                      <span className="text-[10px] font-black uppercase tracking-widest">
+                        {format(new Date(alerts[0].timestamp), "dd 'de' MMMM 'às' HH:mm", { locale: ptBR })}
+                      </span>
+                    </div>
+                    <p className="font-black text-lg mb-2">{alerts[0].message}</p>
+                    {alerts[0].details && (
+                      <p className="text-sm opacity-80 leading-relaxed border-t border-current/10 pt-3 mt-3">
+                        {alerts[0].details}
+                      </p>
+                    )}
                   </div>
-                  <div>
-                    <h3 className="text-[10px] font-black text-slate-500 uppercase tracking-[0.4em] mb-2">Comunicação</h3>
-                    <p className="text-3xl font-black text-white tracking-tighter serif italic leading-none">Emitir Alerta Oficial</p>
+                ) : (
+                  <div className="flex flex-col items-center justify-center py-20 text-slate-300">
+                    <ShieldAlert size={48} strokeWidth={1} className="mb-4 opacity-20" />
+                    <p className="text-xs font-black uppercase tracking-widest">Nenhum alerta registrado</p>
                   </div>
+                )}
+
+                <div className="mt-6 p-4 bg-slate-50 rounded-2xl border border-slate-100">
+                  <p className="text-[10px] font-black text-slate-400 uppercase tracking-widest mb-2">Dica de Operação</p>
+                  <p className="text-xs text-slate-500 leading-relaxed">
+                    Alertas publicados aqui são enviados imediatamente para o dashboard público e incluídos nos relatórios oficiais em PDF.
+                  </p>
                 </div>
-                <form onSubmit={handleAlertSubmit} className="space-y-8 relative z-10">
-                  <div className="space-y-4">
-                    <label className="block text-[10px] font-black text-slate-500 uppercase tracking-[0.3em] ml-2">Nível de Gravidade</label>
-                    <select 
-                      value={adminAlertLevel}
-                      onChange={(e) => setAdminAlertLevel(e.target.value)}
-                      className="w-full bg-slate-800/50 border border-slate-800 rounded-[2rem] px-8 py-5 text-white font-black focus:outline-none focus:ring-4 focus:ring-blue-500/10 focus:bg-slate-800 transition-all duration-500 appearance-none uppercase tracking-widest text-xs"
-                    >
-                      <option value="info">INFORMATIVO (AZUL)</option>
-                      <option value="warning">ATENÇÃO (AMARELO)</option>
-                      <option value="danger">CRÍTICO (VERMELHO)</option>
-                    </select>
-                  </div>
-                  <div className="space-y-4">
-                    <label className="block text-[10px] font-black text-slate-500 uppercase tracking-[0.3em] ml-2">Mensagem do Alerta</label>
-                    <textarea 
-                      value={adminAlert}
-                      onChange={(e) => setAdminAlert(e.target.value)}
-                      className="w-full bg-slate-800/50 border border-slate-800 rounded-[2rem] px-8 py-5 text-white font-black focus:outline-none focus:ring-4 focus:ring-blue-500/10 focus:bg-slate-800 transition-all duration-500 min-h-[150px] serif italic text-lg resize-none"
-                      placeholder="Digite a mensagem oficial..."
-                      required
-                    />
-                  </div>
-                  <button type="submit" className="w-full py-6 bg-orange-600 hover:bg-orange-700 text-white font-black rounded-[2rem] transition-all duration-500 shadow-2xl shadow-orange-600/20 active:scale-[0.98] uppercase tracking-[0.3em] text-xs flex items-center justify-center gap-4">
-                    <ShieldAlert size={18} />
-                    Publicar Alerta
-                  </button>
-                </form>
               </div>
             </div>
           )}
         </div>
 
         {/* Footer */}
-        <footer className="mt-auto p-10 text-center">
-          <p className="text-[10px] font-black text-slate-500 uppercase tracking-[0.5em] mb-2">
-            Prefeitura Municipal de Ubá &copy; {new Date().getFullYear()}
-          </p>
-          <p className="text-[8px] font-black text-slate-600 uppercase tracking-[0.2em]">
-            Sistema de Monitoramento de Riscos e Desastres Naturais
-          </p>
+        <footer className="mt-auto p-6 text-center text-[10px] font-black text-slate-400 uppercase tracking-[0.2em] border-t border-slate-100">
+          Prefeitura Municipal de Ubá &copy; {new Date().getFullYear()} - Sistema de Monitoramento de Riscos
         </footer>
       </main>
     </div>
